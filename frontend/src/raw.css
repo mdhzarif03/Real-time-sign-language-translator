@@ -1,0 +1,9 @@
+.raw-sequence{min-height:200px;flex:1;padding:17px;border:1px dashed #dceae4;border-radius:10px;background:linear-gradient(145deg,#fcfdfc,#f7fbf9)}
+.raw-sequence-label{display:flex;justify-content:space-between;gap:8px;color:#7e938b;font-size:8px;font-weight:700;letter-spacing:.65px}
+.raw-sequence-label span:last-child{color:#38856e}
+.raw-sequence p{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0;min-height:30px}
+.gloss-token{display:inline-flex;align-items:center;gap:4px;padding:7px 10px;background:#eaf6f1;border:1px solid #d9eee5;border-radius:7px;color:#286e5c;font-size:12px;font-weight:650}
+.gloss-token.uncertain{color:#967746;border-color:#f0e3c8;background:#fff9ed}
+.gloss-token b{font-size:10px}
+.raw-sequence-note{display:flex;align-items:flex-start;gap:7px;padding-top:12px;border-top:1px solid #e9f0ec;color:#8b795d;font-size:9px;line-height:1.5}
+.raw-sequence-note svg{flex:0 0 auto}

@@ -1,41 +1,49 @@
 # Real-time sign language translator
 
-An extensible, privacy-first foundation for continuous sign-language translation. Recognition is language-specific and temporal. This repository currently contains architecture and wire/configuration contracts only; it does not contain a trained recognition model or claim translation accuracy.
+Privacy-first foundation for continuous sign-language translation. The live camera and local hand/pose/face landmark pipeline are implemented. No trained sign-language recognition checkpoint is included, so the app does not fabricate translations or claim accuracy.
 
 ## Current state
 
-- Repository was initially empty apart from `.gitattributes`.
-- Architecture and initial configuration/contracts are recorded in [`docs/architecture.md`](docs/architecture.md).
-- No camera capture, landmark inference, translation, or speech implementation has been added yet.
-- No model checkpoint is configured. The application must report this state instead of generating predictions.
+- The web client captures camera video locally and runs MediaPipe Holistic Landmarker for face, pose, and both hands in a dedicated worker.
+- Camera frames are not uploaded or recorded. Local vision task files are downloaded once into the frontend's public assets.
+- Translation and speech output are unavailable until a compatible temporal recognition model and language realization layer are supplied.
+- Architecture and stream contracts: [`docs/architecture.md`](docs/architecture.md), [`contracts/stream-event.schema.json`](contracts/stream-event.schema.json).
 
-## Architecture decisions
+## Run the client
 
-- **Client:** React + TypeScript + Vite for camera permission, preview, accessible controls, and transcript. Capture and rendering stay in the browser; compute-heavy work must not block the UI thread.
-- **Vision:** MediaPipe Tasks is the initial candidate for local hand, pose, and face landmarks. It extracts visual features; it is not a sign-language translator. The adapter remains replaceable.
-- **Service:** Python + FastAPI WebSocket for local streaming inference and health/status. Transmit timestamped landmarks rather than video by default.
-- **ML:** PyTorch for training and experiment tracking; ONNX Runtime for deployment when target hardware supports it. Temporal encoder and sequence decoder are behind a language-specific recognizer interface.
-- **Language/TTS:** Independent language realization with conservative confidence handling; browser SpeechSynthesis as the first local TTS adapter, replaceable by a streaming provider.
-
-These are implementation choices for the next phases, not dependencies installed by this foundation commit.
-
-## Planned local development commands
-
-The repository has not yet been initialized as a frontend or Python package. When Phase 2 begins, use these commands to add the client in its own directory and establish a Python environment without replacing the repository:
+Requirements: Node.js 20.19+ or 22.12+, npm, a webcam, and a browser with camera and module-worker support. Run from the repository root:
 
 ```powershell
-npm create vite@latest frontend -- --template react-ts
 cd frontend
 npm install
-cd ..
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install fastapi "uvicorn[standard]" pydantic-settings
+npm run setup:vision
+npm run dev
 ```
 
-Do not install a framework-specific ML runtime until the target platform and supported model are selected. Dataset and checkpoint files belong outside version control.
+Open the localhost URL printed by Vite. `setup:vision` downloads official task models into the local, ignored `frontend/src/vision-assets/models` directory; a SHA-256 manifest is written alongside them. Vite bundles those models and the pinned WASM runtime into local static assets. Camera video remains local and no model/CDN downloads happen while the app is running.
 
-## Privacy and capability policy
+Run the local API in a second PowerShell window from the repository root:
 
-Local processing is the default. Do not persist raw camera frames or log them. Any future cloud mode requires an explicit opt-in and a clear UI indicator. Until a language-specific checkpoint has been trained and evaluated on signer-independent data, the product must show that recognition is unavailable; it must not substitute hard-coded gestures, random predictions, or an unrelated sign-language model.
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r backend/requirements.txt
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+```
+
+The API accepts validated landmark messages only from loopback clients, enforces message/rate limits, and reports recognition unavailable by default. To load a trained checkpoint, follow the manifest instructions in [`training/README.md`](training/README.md). Loaded models emit raw gloss hypotheses; natural-language realization is not implemented.
+
+## Architecture choices
+
+- React + TypeScript client for camera permissions, responsive controls, and transcript UI.
+- MediaPipe Tasks Vision in a module worker for hand, pose, and face landmark extraction. It is not a sign-language translator.
+- Future recognition service: FastAPI WebSocket, PyTorch for training, ONNX Runtime for deployment.
+- Browser SpeechSynthesis is the intended local TTS fallback after stable translated text exists.
+
+ASL and Bangla Sign Language are distinct languages requiring independent training data, models, and evaluation. No model is configured in `configs/default.yaml`. Do not treat landmarks as sign predictions.
+
+The temporal training baseline and signer-split tooling are documented in [`training/README.md`](training/README.md). Training requires a suitable annotated dataset; no sample dataset or pretrained sign model is bundled.
+
+## Privacy and limitations
+
+Local processing is the default. No raw frames are persisted, logged, or sent to a server. The current version visualizes extracted landmarks only. It cannot yet interpret sign sequences or speak translations. Accuracy, latency, and generalization have not been benchmarked.

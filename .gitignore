@@ -14,6 +14,11 @@ checkpoints/
 *.pt
 *.pth
 *.tflite
+frontend/src/vision-assets/models/*.task
+frontend/src/vision-assets/models/manifest.json
+frontend/public/models/*.task
+frontend/public/models/manifest.json
+frontend/public/wasm/
 
 # Local configuration and logs
 .env
@@ -23,3 +28,4 @@ checkpoints/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+frontend/*.tsbuildinfo

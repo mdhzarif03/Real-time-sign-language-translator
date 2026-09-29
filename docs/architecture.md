@@ -27,7 +27,7 @@ The default wire format carries landmarks and metadata, not image or video bytes
 | Component | Responsibility | Initial implementation choice |
 | --- | --- | --- |
 | Camera client | Permission, device selection, preview, timestamps | Browser MediaDevices, React/TypeScript |
-| Landmark adapter | Hands, pose, face, visibility and handedness | MediaPipe Tasks candidate, local runtime |
+| Landmark adapter | Hands, pose, face, visibility and handedness | MediaPipe Holistic Landmarker, local runtime |
 | Tracker/stream | Stable identities, sequence ordering, bounded latest-frame queue | Client worker; monotonic timestamps |
 | Recognition service | Temporal decoding and confidence/boundary estimates | Python/FastAPI WebSocket; PyTorch training; ONNX Runtime deployment |
 | Language realization | Convert sign/semantic hypotheses to target-language text conservatively | Language-specific adapter, no generic auto-completion |
@@ -88,15 +88,17 @@ models/          Locally supplied versioned checkpoints; ignored
 data/            Local datasets; ignored
 ```
 
+Implemented foundations now include the React/Vite camera client and local landmark worker in `frontend/`, a loopback-only FastAPI status/landmark WebSocket in `backend/app/`, a fixed landmark feature layout, a temporal CTC/Transformer model baseline, and signer-split/training entry points under `training/`. The local service deliberately returns `model_unavailable`; model manifest parsing alone never activates inference.
+
 ## Development phases
 
-1. **Foundation (this phase):** architecture decisions, privacy/capability rules, versioned stream contract, and safe configuration. No fake inference or generated app is included.
-2. **Camera/UI:** accessible React shell, device/permission states, worker-based capture, local-processing indicator, and metrics layout.
-3. **Vision/transport:** local landmark adapter, tracking, WebSocket validation, health/error states, and no-video default.
-4. **Recognition interface:** temporal streaming API, checkpoint compatibility checks, sequence stabilization, boundaries, and honest unavailable state.
-5. **Language-specific model:** choose dataset/language, train/evaluate signer-independent temporal model, export and benchmark deployment checkpoint.
-6. **Language/TTS:** conservative realization, incremental transcript, local TTS, interruptibility and controls.
-7. **Hardening:** accessibility review, failure recovery, security limits, device benchmarks, dataset/model documentation.
+1. **Foundation:** architecture decisions, privacy/capability rules, versioned stream contract, and safe configuration. Complete.
+2. **Camera/UI:** accessible React shell, device/permission states, worker-based capture, local-processing indicator, and metrics layout. Implemented; needs device-level visual validation.
+3. **Vision/transport:** local landmark adapter, temporal sampling, WebSocket validation, health/error states, and no-video transport. Implemented as a local landmark/status path; needs browser/device validation.
+4. **Recognition runtime:** a local PyTorch temporal checkpoint loader, language/feature compatibility checks, CTC gloss decoder, confidence/timing events, and raw-gloss UI are implemented. Sequence stability/calibration and model evaluation remain.
+5. **Language-specific model:** signer-split tooling and a training baseline exist. A legally usable, annotated dataset and trained checkpoint are still required; no inference quality is claimed.
+6. **Language/TTS:** UI controls and browser speech fallback controls are present, but sentence realization and recognition-fed phrase speech remain to implement.
+7. **Hardening:** accessibility review, failure recovery, security limits, device benchmarks, dataset/model documentation, and browser camera verification remain.
 
 ## Hardware assumptions and limits
 
