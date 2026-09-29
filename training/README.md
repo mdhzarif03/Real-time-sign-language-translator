@@ -1,8 +1,36 @@
 # Training a language-specific sequence recognizer
 
-The temporal model in `backend/recognition/temporal_model.py` predicts CTC gloss sequences and frame-level boundary classes from timestamped landmarks. It is an architecture baseline, not a trained translator. The output is a sign/gloss sequence; a separate language-specific realization layer is still required to produce Bengali or English sentences.
+The spatial graph encoders in `backend/recognition/temporal_model.py` encode each hand's joint topology and upper-body pose graph, pool facial landmarks, then use a temporal Transformer with CTC gloss and boundary heads. It is an architecture baseline, not a trained translator. The output is a sign/gloss sequence; a separate language-specific realization layer is still required to produce Bengali or English sentences.
+
+## Dataset selection and use rights
+
+Dataset availability does not imply production-use rights. Confirm the source license and any signer consent restrictions before downloading, training, or distributing derived weights. The currently documented corpora do not provide an obvious, verified, commercially deployable continuous corpus for both target languages:
+
+- [How2Sign](https://how2sign.github.io/) provides continuous ASL with English translations and signer splits, but is research-only and licensed CC BY-NC 4.0. It is not suitable for a commercial deployment without separate permission.
+- [WLASL](https://github.com/krazyjoy/WLASL) is word-level ASL, governed by its C-UDA, and its maintainers explicitly prohibit commercial use. It can inform isolated-sign experiments, not establish continuous sentence translation.
+- [BdSLW60](https://arxiv.org/abs/2402.08635) is a 60-word, 9,307-trial BdSL dataset with 18 signers. The paper reports 75.1% testing accuracy for its attention BiLSTM baseline; this is a word-level benchmark, not an end-to-end sentence translator. Obtain and review the dataset's actual terms before use.
+- [Ban-Sign-Sent-9K-V1](https://huggingface.co/datasets/banglagov/Ban-Sign-Sent-9K-V1) describes 1,922 continuous BdSL sentences and 9,610 videos, but its card currently has no license metadata. Do not use or redistribute it until the rights and signer split are verified with its maintainers.
+
+This repository intentionally does not fetch or bundle these datasets. Until a suitable, licensed corpus is selected and signer-independent evaluation is completed, no language checkpoint should be marked production-ready.
 
 ## Data contract
+
+Raw videos are not bundled. A corpus-specific adapter must provide trusted per-sign gloss timestamps and keep every source video/signers within the dataset license. `prepare_landmarks.py` performs video decoding, 12.5 Hz sampling, holistic feature extraction, and boundary-target generation using the same 2,212-float layout as runtime. It requires Python 3.12 plus the training dependencies.
+
+First, write metadata JSONL rows like the following. `start_ms` and `end_ms` must be corpus annotations reviewed by a fluent sign-language annotator; do not synthesize them from sentence duration or model predictions:
+
+```json
+{"sample_id":"clip-0001","signer_id":"signer-01","language":"en-US-ASL","video_path":"videos/clip-0001.mp4","segments":[{"gloss":"GO","start_ms":480,"end_ms":920},{"gloss":"SCHOOL","start_ms":1040,"end_ms":1710}]}
+```
+
+Assign signer splits before feature extraction, define a language-specific gloss vocabulary, then extract features:
+
+```powershell
+python training/split_by_signer.py data/raw/annotations.jsonl data/processed/annotations.split.jsonl --seed 2026
+python training/prepare_landmarks.py data/processed/annotations.split.jsonl data/processed/asl-vocabulary.json data/raw data/processed --model frontend/src/vision-assets/models/holistic_landmarker.task --sample-hz 12.5
+```
+
+The second command creates `manifest.features.jsonl` with `.npy` arrays and boundary targets. It rejects unknown glosses, missing signer splits, traversal outside the dataset root, and segments that are too short at the selected sampling rate.
 
 Each JSONL row in the training manifest contains:
 
@@ -39,6 +67,14 @@ python training/train_ctc.py data/processed/manifest.split.jsonl data/processed/
 ```
 
 The script checks signer split isolation, reports validation gloss WER each epoch, saves the best validation checkpoint, then evaluates that checkpoint once on the held-out test split. These numbers describe the supplied dataset only. The local API can load the checkpoint with the manifest below; sentence realization remains subsequent implementation work.
+
+For a reproducible standalone held-out report (sequence WER, sentence error rate, token precision/recall/F1, edit counts, signer/sample counts, hashes, hardware/software, and model-only latency percentiles), run:
+
+```powershell
+python training/evaluate.py data/processed/manifest.features.jsonl models/asl-temporal.pt --language en-US-ASL --output reports/asl-heldout.json
+```
+
+Model latency excludes video decoding and landmark extraction; do not present it as end-to-end latency. The held-out test set should only be evaluated after model/configuration decisions are frozen.
 
 To opt a trained checkpoint into local gloss inference, save a manifest beside the checkpoint (for the example command, `models/asl-temporal.manifest.json`):
 

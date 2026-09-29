@@ -61,6 +61,15 @@ class TokenHypothesis(StrictModel):
         return self
 
 
+class TranslationHypothesis(StrictModel):
+    """A language-realizer result, kept separate from the recognized glosses."""
+
+    text: str = Field(min_length=1, max_length=2000)
+    language: str = Field(min_length=2, max_length=32)
+    confidence: float = Field(ge=0, le=1)
+    uncertain: bool
+
+
 class Hypothesis(StrictModel):
     schema_version: Literal[1] = 1
     type: Literal["hypothesis"] = "hypothesis"
@@ -71,4 +80,5 @@ class Hypothesis(StrictModel):
     is_final: bool
     confidence: float = Field(ge=0, le=1)
     tokens: Annotated[list[TokenHypothesis], Field(max_length=256)]
+    translation: TranslationHypothesis | None = None
     latency_ms: float | None = Field(default=None, ge=0)

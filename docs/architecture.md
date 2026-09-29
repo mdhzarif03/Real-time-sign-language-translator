@@ -38,7 +38,7 @@ The WebSocket accepts only versioned JSON events validated against `contracts/st
 
 ### Temporal recognition design
 
-The main model is not a frame classifier. The planned model consumes a sliding timestamped sequence with left/right hand identity, per-landmark visibility, pose and face features. A spatial/relational encoder feeds a temporal Transformer or temporal convolution encoder; a CTC or boundary-aware sequence decoder emits a sequence with timestamps and calibrated confidence. Architecture selection is finalized against the chosen language dataset and target hardware. Tracking and temporal smoothing handle short dropouts, variable speed, and pose holds; a held pose cannot by itself produce repeated signs.
+The main model is not a frame classifier. The current training baseline consumes a sliding timestamped sequence with left/right hand identity, per-landmark visibility, pose and face features. Hand and pose spatial graph encoders feed a temporal Transformer with CTC and boundary heads. It emits glosses, not natural-language translation. The client uses Holistic Landmarker tracking; robust temporal smoothing, boundary-aware duplicate suppression, and pose-hold behavior remain evaluation and decoder work. Decoder calibration and model behavior require signer-held-out evaluation.
 
 The recognition adapter contract must support model ID/version, sign-language ID, health/loading state, partial and final hypotheses, uncertainty, and latency. Model absence or incompatible language must fail closed.
 
@@ -97,8 +97,8 @@ Implemented foundations now include the React/Vite camera client and local landm
 3. **Vision/transport:** local landmark adapter, temporal sampling, WebSocket validation, health/error states, and no-video transport. Implemented as a local landmark/status path; needs browser/device validation.
 4. **Recognition runtime:** a local PyTorch temporal checkpoint loader, language/feature compatibility checks, CTC gloss decoder, confidence/timing events, and raw-gloss UI are implemented. Sequence stability/calibration and model evaluation remain.
 5. **Language-specific model:** signer-split tooling and a training baseline exist. A legally usable, annotated dataset and trained checkpoint are still required; no inference quality is claimed.
-6. **Language/TTS:** UI controls and browser speech fallback controls are present, but sentence realization and recognition-fed phrase speech remain to implement.
-7. **Hardening:** accessibility review, failure recovery, security limits, device benchmarks, dataset/model documentation, and browser camera verification remain.
+6. **Language/TTS:** bounded browser phrase speech and UI controls exist. The language-specific sentence realizer is intentionally absent until a real, evaluated sign-to-language resource is available; no gloss-to-sentence guesses are emitted.
+7. **Hardening:** loopback/origin checks, payload/rate limits, local-only video, and missing-model/camera/TTS handling are implemented. Accessibility review, device benchmarks, robust reconnects, corpus-backed model evaluation, and multi-device camera verification remain.
 
 ## Hardware assumptions and limits
 

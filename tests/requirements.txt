@@ -1,0 +1,2 @@
+-r ../backend/requirements.txt
+httpx2>=2.13,<3

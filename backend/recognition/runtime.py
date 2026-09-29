@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -10,7 +12,16 @@ import torch
 
 from backend.app.features import FEATURE_DIM
 from backend.app.schemas import Hypothesis, Status, TokenHypothesis
-from .temporal_model import TemporalSignTransformer
+from .temporal_model import build_model_from_config
+
+
+def configure_cpu_threads() -> int:
+    """Avoid severe CPU oversubscription; operators may tune this for their host."""
+    requested = int(os.getenv("SIGNFLOW_TORCH_THREADS", "4"))
+    if not 1 <= requested <= 64:
+        raise ValueError("SIGNFLOW_TORCH_THREADS must be between 1 and 64")
+    torch.set_num_threads(requested)
+    return requested
 
 FEATURE_LAYOUT = "hands-left-right-21x4_pose-33x4_face-478x4_v1"
 
@@ -30,6 +41,7 @@ class TemporalRuntime:
     def load(cls, manifest_path: str | Path) -> tuple[TemporalRuntime | None, Status]:
         path = Path(manifest_path).expanduser().resolve()
         try:
+            configure_cpu_threads()
             manifest = json.loads(path.read_text(encoding="utf-8"))
             required = ("model_id", "model_version", "sign_language", "checkpoint", "feature_layout")
             if not isinstance(manifest, dict) or any(not isinstance(manifest.get(key), str) or not manifest[key] for key in required):
@@ -53,7 +65,7 @@ class TemporalRuntime:
             ids = sorted(int(index) for index in vocabulary.values())
             if ids != list(range(1, len(vocabulary) + 1)):
                 raise ValueError("checkpoint vocabulary IDs must be contiguous from 1")
-            model = TemporalSignTransformer(FEATURE_DIM, len(vocabulary))
+            model = build_model_from_config(config, len(vocabulary))
             model.load_state_dict(checkpoint["model_state"], strict=True)
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             model.to(device)
@@ -75,6 +87,7 @@ class TemporalRuntime:
     def predict(self, observations: Sequence[tuple[np.ndarray, int]], stream_id: str, revision: int) -> Hypothesis | None:
         if len(observations) < 8:
             return None
+        inference_started = time.perf_counter()
         selected = observations[-self.window_size :]
         features = np.stack([item[0] for item in selected]).astype(np.float32, copy=False)
         timestamps = [item[1] for item in selected]
@@ -85,7 +98,6 @@ class TemporalRuntime:
         probabilities = output.sign_logits[0].softmax(dim=-1)
         labels = output.sign_logits[0].argmax(dim=-1).tolist()
         tokens: list[TokenHypothesis] = []
-        last_label = 0
         active_id = 0
         active_start = 0
         active_scores: list[float] = []
@@ -107,7 +119,7 @@ class TemporalRuntime:
             if label == active_id and label != 0:
                 active_scores.append(float(probabilities[index, label].item()))
                 active_end = index
-            elif label != 0 and label != last_label:
+            elif label != 0:
                 flush()
                 active_id = label
                 active_start = active_end = index
@@ -116,7 +128,6 @@ class TemporalRuntime:
                 flush()
                 active_id = 0
                 active_scores = []
-            last_label = label
         flush()
 
         boundary = output.boundary_logits[0, -min(4, len(selected)) :].softmax(dim=-1)
@@ -130,4 +141,5 @@ class TemporalRuntime:
             is_final=is_final,
             confidence=confidence,
             tokens=tokens,
+            latency_ms=(time.perf_counter() - inference_started) * 1000,
         )

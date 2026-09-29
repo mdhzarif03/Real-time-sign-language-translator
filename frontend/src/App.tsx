@@ -4,6 +4,7 @@ import {
   Mic2, Pause, Play, RotateCcw, Settings2, ShieldCheck, Sparkles, Square, Volume2,
 } from 'lucide-react';
 import type { LandmarkFrame, VisionWorkerMessage } from './vision.types';
+import { SpeechQueue, type SpeechState } from './tts/SpeechQueue';
 
 type CameraState = 'idle' | 'starting' | 'running' | 'paused' | 'error';
 
@@ -75,6 +76,13 @@ export default function App() {
   const streamLanguageRef = useRef('en-US-ASL');
   const sequenceRef = useRef(0);
   const previousHypothesisRef = useRef<Array<{ text: string; confidence: number; uncertain: boolean }>>([]);
+  const speechQueueRef = useRef<SpeechQueue | undefined>(undefined);
+  const speechStateRef = useRef<SpeechState>('idle');
+  const thresholdRef = useRef(70);
+  const speechSettingsRef = useRef<{ language: string; rate: number; volume: number; voice?: SpeechSynthesisVoice }>({ language: 'en-US', rate: 1, volume: 1 });
+  const spokenRevisionRef = useRef(-1);
+  const spokenTranslationRef = useRef('');
+  const partialTurnRef = useRef(false);
   const busyRef = useRef(false);
   const epochRef = useRef(0);
   const fpsWindowRef = useRef({ startedAt: 0, frames: 0 });
@@ -97,6 +105,14 @@ export default function App() {
   const [outputLanguage, setOutputLanguage] = useState('en-US');
   const [threshold, setThreshold] = useState(70);
   const [speechRate, setSpeechRate] = useState(1);
+  const [speechVolume, setSpeechVolume] = useState(1);
+  const [speechState, setSpeechState] = useState<SpeechState>('idle');
+  const [speechLatencyMs, setSpeechLatencyMs] = useState<number>();
+  const [recognitionLatencyMs, setRecognitionLatencyMs] = useState<number>();
+  const [translationText, setTranslationText] = useState('');
+  const [translationConfidence, setTranslationConfidence] = useState<number>();
+  const [translationUncertain, setTranslationUncertain] = useState(false);
+  const [lastSpeech, setLastSpeech] = useState('');
   const [selectedVoice, setSelectedVoice] = useState('');
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [glossTokens, setGlossTokens] = useState<Array<{ text: string; confidence: number; uncertain: boolean }>>([]);
@@ -111,6 +127,24 @@ export default function App() {
     return () => window.speechSynthesis?.removeEventListener('voiceschanged', updateVoices);
   }, []);
 
+  useEffect(() => {
+    const queue = new SpeechQueue(window.speechSynthesis, (state) => {
+      speechStateRef.current = state;
+      setSpeechState(state);
+    }, setSpeechLatencyMs);
+    speechQueueRef.current = queue;
+    return () => { queue.dispose(); speechQueueRef.current = undefined; };
+  }, []);
+
+  const speechSettings = useCallback(() => ({
+    language: outputLanguage,
+    rate: speechRate,
+    volume: speechVolume,
+    voice: voices.find((item) => item.voiceURI === selectedVoice),
+  }), [outputLanguage, selectedVoice, speechRate, speechVolume, voices]);
+  thresholdRef.current = threshold;
+  speechSettingsRef.current = speechSettings();
+
   const connectLocalRecognizer = useCallback((language: string) => {
     socketRef.current?.close(1000, 'Starting a fresh signer stream');
     streamIdRef.current = crypto.randomUUID(); sequenceRef.current = 0;
@@ -121,7 +155,12 @@ export default function App() {
     setServiceStatus('Connecting to local recognizer…');
     socket.onmessage = (event) => {
       try {
-        const message = JSON.parse(event.data) as { type?: string; state?: string; message?: string; confidence?: number; is_final?: boolean; tokens?: Array<{ text: string; confidence: number; uncertain: boolean }> };
+        const message = JSON.parse(event.data) as {
+          type?: string; state?: string; message?: string; confidence?: number; is_final?: boolean; latency_ms?: number;
+          revision?: number;
+          tokens?: Array<{ text: string; confidence: number; uncertain: boolean }>;
+          translation?: { text: string; language: string; confidence: number; uncertain: boolean };
+        };
         if (message.type === 'status') setServiceStatus(message.message || message.state || 'Local service ready');
         else if (message.type === 'hypothesis') {
           setServiceStatus('Temporal recognition active');
@@ -137,6 +176,28 @@ export default function App() {
             previousHypothesisRef.current = incoming;
           }
           setGlossConfidence(message.confidence);
+          if (message.latency_ms !== undefined) setRecognitionLatencyMs(message.latency_ms);
+          if (!message.is_final && !partialTurnRef.current) {
+            partialTurnRef.current = true;
+            spokenTranslationRef.current = '';
+            if (speechStateRef.current === 'speaking' || speechStateRef.current === 'queued') speechQueueRef.current?.stop();
+          }
+          if (message.translation) {
+            const translation = message.translation;
+            setTranslationText(translation.text);
+            setTranslationConfidence(translation.confidence);
+            const uncertain = translation.uncertain || translation.confidence * 100 < thresholdRef.current;
+            setTranslationUncertain(uncertain);
+            const revision = message.revision ?? -1;
+            if (message.is_final && !uncertain && revision !== spokenRevisionRef.current && translation.text !== spokenTranslationRef.current) {
+              spokenRevisionRef.current = revision;
+              spokenTranslationRef.current = translation.text;
+              lastSpeechRef.current = translation.text;
+              setLastSpeech(translation.text);
+              speechQueueRef.current?.replace(translation.text, { ...speechSettingsRef.current, language: translation.language });
+            }
+            if (message.is_final) partialTurnRef.current = false;
+          }
         }
       } catch {
         setServiceStatus('Local service returned an invalid status');
@@ -250,7 +311,10 @@ export default function App() {
       if (video && worker && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && !busyRef.current && now - (frame?.timestampMs ?? 0) > 80) {
         busyRef.current = true;
         try {
-          const bitmap = await createImageBitmap(video);
+          const scale = Math.min(1, 640 / video.videoWidth);
+          const width = Math.max(1, Math.round(video.videoWidth * scale));
+          const height = Math.max(1, Math.round(video.videoHeight * scale));
+          const bitmap = await createImageBitmap(video, { resizeWidth: width, resizeHeight: height, resizeQuality: 'low' });
           worker.postMessage({ type: 'frame', bitmap, timestampMs: Math.max(now, (frame?.timestampMs ?? 0) + 1) }, [bitmap]);
         } catch {
           busyRef.current = false;
@@ -274,18 +338,14 @@ export default function App() {
     window.speechSynthesis?.cancel();
   }, []);
 
-  const stopSpeech = () => window.speechSynthesis?.cancel();
+  const stopSpeech = () => speechQueueRef.current?.stop();
   const retrySpeech = () => {
     if (!lastSpeechRef.current || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(lastSpeechRef.current);
-    utterance.lang = outputLanguage; utterance.rate = speechRate;
-    const voice = voices.find((item) => item.voiceURI === selectedVoice);
-    if (voice) utterance.voice = voice;
-    window.speechSynthesis.speak(utterance);
+    speechQueueRef.current?.retry(speechSettings());
   };
 
   const handCount = frame?.hands.length ?? 0;
+  const isTranslationUncertain = translationUncertain || (translationConfidence !== undefined && translationConfidence * 100 < threshold);
   const visionLabel = visionState === 'ready' ? 'Vision active' : visionState === 'loading' ? 'Loading local models' : visionState === 'error' ? 'Vision unavailable' : 'Vision paused';
   const cameraLabel = cameraState === 'running' ? 'Camera live' : cameraState === 'paused' ? 'Camera paused' : cameraState === 'starting' ? 'Connecting camera' : 'Camera off';
 
@@ -325,11 +385,13 @@ export default function App() {
           </section>
 
           <section className="translation-card card" aria-labelledby="translation-title">
-            <div className="card-heading"><div><div className="section-kicker">LIVE SIGN SEQUENCE</div><h2 id="translation-title">Recognized glosses</h2></div><button className="icon-button" title="Clear transcript" aria-label="Clear transcript" onClick={() => { lastSpeechRef.current = ''; setGlossTokens([]); setGlossConfidence(undefined); setGlossFinal(false); previousHypothesisRef.current = []; stopSpeech(); }}><RotateCcw size={16} /></button></div>
-            {glossTokens.length ? <div className="raw-sequence"><div className="raw-sequence-label"><span>RAW SIGN SEQUENCE · GLOSS</span><span>{glossFinal ? 'STABLE' : 'PARTIAL'}</span></div><p aria-live="polite">{glossTokens.map((token, index) => <span className={token.uncertain ? 'gloss-token uncertain' : 'gloss-token'} title={`Model score ${(token.confidence * 100).toFixed(0)}%${token.uncertain ? ' · uncertain' : ''}`} key={`${index}-${token.text}`}>{token.uncertain && <b aria-label="uncertain">?</b>}{token.text}</span>)}</p><div className="raw-sequence-note"><CircleHelp size={14} /> Gloss output is not a natural-language translation and will not be spoken.</div></div> : <div className="translation-empty"><div className="wave-icon"><AudioLines size={22} /></div><h3>Translation is not available yet</h3><p>This workspace can track visual landmarks. A trained {signLanguage} sequence model is required before it can recognize signs or generate a sentence.</p><div className="model-notice"><CircleHelp size={16} /><span>No compatible recognition model is loaded. No words will be guessed.</span></div></div>}
-            <div className="confidence-row"><div><span className="muted-label">MODEL SCORE · UNCALIBRATED</span><strong>{glossConfidence === undefined ? '—' : `${(glossConfidence * 100).toFixed(0)}%`}</strong></div><div className="confidence-track"><span style={{ width: `${(glossConfidence ?? 0) * 100}%` }} /></div><span className="confidence-unavailable">{glossConfidence === undefined ? 'Unavailable' : glossConfidence * 100 < threshold ? 'Uncertain' : 'Model score'}</span></div>
-            <div className="speech-row"><div className="speech-identity"><div className="speech-icon"><Volume2 size={17} /></div><div><strong>Speech output</strong><span>Available after a translation model is added</span></div></div><div className="speech-actions"><button className="icon-button" aria-label="Stop speech" title="Stop speech" onClick={stopSpeech}><Square size={14} fill="currentColor" /></button><button className="icon-button" aria-label="Retry last speech" title="Retry last speech" onClick={retrySpeech} disabled={!lastSpeechRef.current}><RotateCcw size={15} /></button></div></div>
-            <div className="transcript-foot"><span><Mic2 size={14} /> Partial transcript</span><span>Waiting for a trained model</span></div>
+            <div className="card-heading"><div><div className="section-kicker">LIVE SIGN SEQUENCE</div><h2 id="translation-title">Recognized signs &amp; translation</h2></div><button className="icon-button" title="Clear transcript" aria-label="Clear transcript" onClick={() => { lastSpeechRef.current = ''; spokenTranslationRef.current = ''; partialTurnRef.current = false; setLastSpeech(''); setTranslationText(''); setTranslationConfidence(undefined); setTranslationUncertain(false); setGlossTokens([]); setGlossConfidence(undefined); setGlossFinal(false); previousHypothesisRef.current = []; spokenRevisionRef.current = -1; stopSpeech(); }}><RotateCcw size={16} /></button></div>
+            {translationText && <div className="translated-sentence" aria-live="polite"><div className="raw-sequence-label"><span>TRANSLATED SENTENCE</span><span>{isTranslationUncertain ? 'UNCERTAIN' : glossFinal ? 'STABLE' : 'PARTIAL'}</span></div><p>{translationText}</p>{isTranslationUncertain && <small>Low confidence — speech is held until the translation is clearer.</small>}</div>}
+            {glossTokens.length ? <div className="raw-sequence"><div className="raw-sequence-label"><span>RAW SIGN SEQUENCE · GLOSS</span><span>{glossFinal ? 'STABLE' : 'PARTIAL'}</span></div><p aria-live="polite">{glossTokens.map((token, index) => { const uncertain = token.uncertain || token.confidence * 100 < threshold; return <span className={uncertain ? 'gloss-token uncertain' : 'gloss-token'} title={`Model score ${(token.confidence * 100).toFixed(0)}%${uncertain ? ' · uncertain' : ''}`} key={`${index}-${token.text}`}>{uncertain && <b aria-label="uncertain">?</b>}{token.text}</span>; })}</p><div className="raw-sequence-note"><CircleHelp size={14} /> Gloss output is not a natural-language translation and will not be spoken.</div></div> : !translationText && <div className="translation-empty"><div className="wave-icon"><AudioLines size={22} /></div><h3>Translation is not available yet</h3><p>This workspace can track visual landmarks. A trained {signLanguage} sequence model is required before it can recognize signs or generate a sentence.</p><div className="model-notice"><CircleHelp size={16} /><span>No compatible recognition model is loaded. No words will be guessed.</span></div></div>}
+            <div className="confidence-row"><div><span className="muted-label">MODEL SCORE · UNCALIBRATED</span><strong>{translationConfidence === undefined ? glossConfidence === undefined ? '—' : `${(glossConfidence * 100).toFixed(0)}%` : `${(translationConfidence * 100).toFixed(0)}%`}</strong></div><div className="confidence-track"><span style={{ width: `${(translationConfidence ?? glossConfidence ?? 0) * 100}%` }} /></div><span className="confidence-unavailable">{isTranslationUncertain ? 'Uncertain' : translationConfidence !== undefined ? 'Translation score' : glossConfidence === undefined ? 'Unavailable' : glossConfidence * 100 < threshold ? 'Uncertain' : 'Model score'}</span></div>
+            <div className="speech-row" aria-live="polite"><div className="speech-identity"><div className="speech-icon"><Volume2 size={17} /></div><div><strong>Speech output</strong><span>{speechState === 'speaking' ? 'Speaking translation' : speechState === 'queued' ? 'Translation queued' : speechState === 'error' ? 'Speech failed · retry available' : speechState === 'unavailable' ? 'Speech synthesis unavailable' : translationText && !isTranslationUncertain ? 'Ready to speak translation' : 'Waiting for a confident translation'}</span></div></div><div className="speech-actions"><button className="icon-button" aria-label="Stop speech" title="Stop speech" onClick={stopSpeech}><Square size={14} fill="currentColor" /></button><button className="icon-button" aria-label="Retry last speech" title="Retry last speech" onClick={retrySpeech} disabled={!lastSpeech}><RotateCcw size={15} /></button></div></div>
+            <div className="transcript-foot"><span><Mic2 size={14} /> Partial transcript</span><span>{serviceStatus.includes('active') ? 'Updating' : 'Waiting for a trained model'}</span></div>
+            <div className="pipeline-metrics" aria-label="Processing metrics"><span>Vision <b>{frame ? `${frame.inferenceMs.toFixed(0)} ms` : '—'}</b></span><span>Recognition <b>{recognitionLatencyMs === undefined ? '—' : `${recognitionLatencyMs.toFixed(0)} ms`}</b></span><span>Speech start <b>{speechLatencyMs === undefined ? '—' : `${speechLatencyMs.toFixed(0)} ms`}</b></span></div>
           </section>
         </div>
 
@@ -339,8 +401,9 @@ export default function App() {
             <label className="field"><span><Languages size={14} /> Sign language</span><div className="select-wrap"><select value={signLanguage} onChange={(event) => { const value = event.target.value; setSignLanguage(value); if (streamRef.current) connectLocalRecognizer(value === 'ASL' ? 'en-US-ASL' : 'bn-BD-BdSL'); }}><option value="ASL">American Sign Language (ASL)</option><option value="BdSL">Bangla Sign Language (BdSL)</option></select><ChevronDown size={14} /></div><small>No trained model available</small></label>
             <label className="field"><span><AudioLines size={14} /> Output language</span><div className="select-wrap"><select value={outputLanguage} onChange={(event) => setOutputLanguage(event.target.value)}><option value="en-US">English</option><option value="bn-BD">বাংলা (Bengali)</option></select><ChevronDown size={14} /></div><small>For speech output</small></label>
             <label className="field"><span><Volume2 size={14} /> Voice</span><div className="select-wrap"><select value={selectedVoice} onChange={(event) => setSelectedVoice(event.target.value)}><option value="">System default</option>{voices.filter((voice) => voice.lang.toLowerCase().startsWith(outputLanguage.slice(0, 2).toLowerCase())).map((voice) => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name}</option>)}</select><ChevronDown size={14} /></div><small>Browser voices · on-device where available</small></label>
-            <label className="field range-field"><span><span><Check size={14} /> Confidence threshold</span><b>{threshold}%</b></span><input type="range" min="50" max="95" step="5" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} /><small>Low-confidence signs will remain uncertain</small></label>
+            <label className="field range-field"><span><span><Check size={14} /> Confidence threshold</span><b>{threshold}%</b></span><input type="range" min="50" max="95" step="5" value={threshold} onChange={(event) => { const next = Number(event.target.value); setThreshold(next); if (translationConfidence !== undefined && translationConfidence * 100 < next) stopSpeech(); }} /><small>Low-confidence signs remain marked uncertain and are not spoken</small></label>
             <label className="field range-field"><span><span><Volume2 size={14} /> Speech speed</span><b>{speechRate.toFixed(1)}×</b></span><input type="range" min="0.7" max="1.3" step="0.1" value={speechRate} onChange={(event) => setSpeechRate(Number(event.target.value))} /><small>Adjust spoken translation pace</small></label>
+            <label className="field range-field"><span><span><Volume2 size={14} /> Volume</span><b>{Math.round(speechVolume * 100)}%</b></span><input type="range" min="0" max="1" step="0.1" value={speechVolume} onChange={(event) => setSpeechVolume(Number(event.target.value))} /><small>Set local speech volume</small></label>
           </div>
         </section>
 

@@ -11,7 +11,7 @@ Privacy-first foundation for continuous sign-language translation. The live came
 
 ## Run the client
 
-Requirements: Node.js 20.19+ or 22.12+, npm, a webcam, and a browser with camera and module-worker support. Run from the repository root:
+Requirements: Node.js 20.19+ or 22.12+, npm, a webcam, and a browser with camera and module-worker support. For the local Python API use Python 3.12. Run from the repository root:
 
 ```powershell
 cd frontend
@@ -25,10 +25,16 @@ Open the localhost URL printed by Vite. `setup:vision` downloads official task m
 Run the local API in a second PowerShell window from the repository root:
 
 ```powershell
-py -3 -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r backend/requirements.txt
 python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+```
+
+Install the API test client before running the full test suite:
+
+```powershell
+python -m pip install -r tests/requirements.txt
 ```
 
 The API accepts validated landmark messages only from loopback clients, enforces message/rate limits, and reports recognition unavailable by default. To load a trained checkpoint, follow the manifest instructions in [`training/README.md`](training/README.md). Loaded models emit raw gloss hypotheses; natural-language realization is not implemented.
@@ -43,6 +49,19 @@ The API accepts validated landmark messages only from loopback clients, enforces
 ASL and Bangla Sign Language are distinct languages requiring independent training data, models, and evaluation. No model is configured in `configs/default.yaml`. Do not treat landmarks as sign predictions.
 
 The temporal training baseline and signer-split tooling are documented in [`training/README.md`](training/README.md). Training requires a suitable annotated dataset; no sample dataset or pretrained sign model is bundled.
+
+## Checks
+
+Run the repository checks with:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+cd frontend
+npm test
+npm run build
+```
+
+To run the PyTorch model and model-forward tests, create a dedicated Python 3.12 environment and install `training/requirements.txt`; keep it separate from the lightweight API environment. See [`training/README.md`](training/README.md) for dataset preparation, training, held-out evaluation, and checkpoint loading.
 
 ## Privacy and limitations
 

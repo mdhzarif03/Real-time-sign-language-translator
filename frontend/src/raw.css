@@ -7,3 +7,9 @@
 .gloss-token b{font-size:10px}
 .raw-sequence-note{display:flex;align-items:flex-start;gap:7px;padding-top:12px;border-top:1px solid #e9f0ec;color:#8b795d;font-size:9px;line-height:1.5}
 .raw-sequence-note svg{flex:0 0 auto}
+.translated-sentence{padding:16px 17px;border:1px solid #d6ebe2;border-radius:10px;background:#f1faf6}
+.translated-sentence p{margin:12px 0 0;color:#1f554a;font-size:17px;font-weight:650;line-height:1.45}
+.translated-sentence small{display:block;margin-top:8px;color:#8b795d;font-size:10px;line-height:1.5}
+.pipeline-metrics{display:flex;flex-wrap:wrap;gap:12px;padding-top:11px;border-top:1px solid #edf1ef;color:#889693;font-size:9px}
+.pipeline-metrics span{display:flex;gap:5px;align-items:center}
+.pipeline-metrics b{color:#526561;font-variant-numeric:tabular-nums}

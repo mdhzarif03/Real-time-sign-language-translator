@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 import sys
@@ -31,16 +32,28 @@ class SequenceDataset(Dataset):
 
     def __getitem__(self, index: int):
         row = self.rows[index]
-        features = np.load(self.root / row["feature_file"], allow_pickle=False).astype(np.float32, copy=False)
-        boundaries = np.load(self.root / row["boundary_file"], allow_pickle=False).astype(np.int64, copy=False)
+        features = np.load(self._safe_path(row["feature_file"]), allow_pickle=False).astype(np.float32, copy=False)
+        boundaries = np.load(self._safe_path(row["boundary_file"]), allow_pickle=False).astype(np.int64, copy=False)
         gloss_ids = np.asarray(row["gloss_ids"], dtype=np.int64)
         if features.ndim != 2 or features.shape[1] != FEATURE_DIM or features.shape[0] < 1:
             raise ValueError(f"{row['sample_id']}: expected non-empty [time,{FEATURE_DIM}] features")
+        if gloss_ids.ndim != 1 or gloss_ids.size == 0:
+            raise ValueError(f"{row['sample_id']}: gloss_ids must be a non-empty sequence")
         if boundaries.shape != (features.shape[0],) or np.any((boundaries < 0) | (boundaries > 3)):
             raise ValueError(f"{row['sample_id']}: boundary labels must be [time] integers in 0..3")
         if np.any((gloss_ids < 1) | (gloss_ids >= self.vocabulary_size)):
             raise ValueError(f"{row['sample_id']}: gloss ID outside the language vocabulary")
         return torch.from_numpy(features), torch.from_numpy(gloss_ids), torch.from_numpy(boundaries)
+
+    def _safe_path(self, relative_path: str) -> Path:
+        if not isinstance(relative_path, str) or not relative_path:
+            raise ValueError("feature and boundary paths must be non-empty relative paths")
+        path = (self.root / relative_path).resolve()
+        if not path.is_relative_to(self.root.resolve()):
+            raise ValueError("manifest feature paths must remain within the manifest directory")
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        return path
 
 
 def collate(batch):
@@ -154,14 +167,28 @@ def main() -> None:
             best_wer = val_wer
             torch.save({
                 "model_state": model.state_dict(),
-                "model_config": {"feature_dim": FEATURE_DIM, "vocabulary_size": len(vocabulary), "architecture": "temporal-transformer-ctc-v1"},
+                "model_config": {
+                    "feature_dim": FEATURE_DIM,
+                    "vocabulary_size": len(vocabulary),
+                    "architecture": "spatiotemporal-landmark-ctc-v2",
+                    "width": model.encoder.layers[0].self_attn.embed_dim,
+                    "heads": model.encoder.layers[0].self_attn.num_heads,
+                    "layers": len(model.encoder.layers),
+                    "feedforward_dim": model.encoder.layers[0].linear1.out_features,
+                    "dropout": model.encoder.layers[0].dropout.p,
+                },
                 "sign_language": args.language,
+                "model_version": "signflow-spatiotemporal-ctc-v2",
                 "vocabulary": vocabulary,
                 "feature_layout": "hands-left-right-21x4_pose-33x4_face-478x4_v1",
                 "dataset_manifest": str(args.manifest),
+                "dataset_manifest_sha256": hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
+                "vocabulary_sha256": hashlib.sha256(args.vocabulary.read_bytes()).hexdigest(),
                 "split_signer_counts": {split: sum(split in labels for labels in signer_splits.values()) for split in ("train", "validation", "test")},
                 "epoch": epoch,
                 "validation_gloss_wer": val_wer,
+                "training_device": str(device),
+                "torch_version": str(torch.__version__),
             }, args.output)
     print(f"best_validation_gloss_wer={best_wer:.4f}; checkpoint={args.output}")
     best = torch.load(args.output, map_location=device, weights_only=True)
