@@ -1,0 +1,25 @@
+# Local environments
+.venv/
+venv/
+node_modules/
+dist/
+__pycache__/
+*.py[cod]
+
+# Private datasets, recordings, and model artifacts
+data/
+models/
+checkpoints/
+*.onnx
+*.pt
+*.pth
+*.tflite
+
+# Local configuration and logs
+.env
+.env.*
+!.env.example
+*.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

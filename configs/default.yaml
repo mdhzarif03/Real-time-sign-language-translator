@@ -1,0 +1,32 @@
+schema_version: 1
+
+privacy:
+  processing_mode: local
+  persist_camera_frames: false
+  allow_cloud_processing: false
+
+recognition:
+  sign_language: null # Must be explicitly selected; e.g. en-US-ASL or bn-BD-BdSL after validation.
+  model_id: null
+  model_version: null
+  confidence_threshold: 0.70
+  partial_window_ms: 2400
+  max_stream_rate_hz: 20
+
+language:
+  output_locale: null
+  conservative_realization: true
+  preserve_uncertain_tokens: true
+
+speech:
+  enabled: true
+  adapter: browser
+  rate: 1.0
+  volume: 1.0
+  cancel_on_new_signing: true
+  max_queued_phrases: 1
+
+runtime:
+  websocket_max_message_bytes: 262144
+  stale_observation_after_ms: 1000
+  metrics_enabled: true

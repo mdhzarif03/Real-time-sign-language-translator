@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/sign-translator/contracts/stream-event.schema.json",
+  "title": "Sign translator stream event",
+  "description": "Versioned metadata and landmark events. Raw image/video payloads are intentionally not supported.",
+  "oneOf": [
+    { "$ref": "#/$defs/observation" },
+    { "$ref": "#/$defs/hypothesis" },
+    { "$ref": "#/$defs/status" }
+  ],
+  "$defs": {
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z", "visibility"],
+      "properties": {
+        "x": { "type": "number", "minimum": -2, "maximum": 2 },
+        "y": { "type": "number", "minimum": -2, "maximum": 2 },
+        "z": { "type": "number", "minimum": -4, "maximum": 4 },
+        "visibility": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "type", "stream_id", "sequence", "timestamp_ms", "sign_language", "landmarks"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "type": { "const": "observation" },
+        "stream_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "timestamp_ms": { "type": "integer", "minimum": 0 },
+        "sign_language": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "image_width": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "image_height": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "landmarks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["left_hand", "right_hand", "pose", "face"],
+          "properties": {
+            "left_hand": { "type": ["array", "null"], "items": { "$ref": "#/$defs/point" }, "maxItems": 21 },
+            "right_hand": { "type": ["array", "null"], "items": { "$ref": "#/$defs/point" }, "maxItems": 21 },
+            "pose": { "type": ["array", "null"], "items": { "$ref": "#/$defs/point" }, "maxItems": 128 },
+            "face": { "type": ["array", "null"], "items": { "$ref": "#/$defs/point" }, "maxItems": 512 }
+          }
+        }
+      }
+    },
+    "hypothesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "type", "stream_id", "model_id", "model_version", "revision", "is_final", "confidence", "tokens"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "type": { "const": "hypothesis" },
+        "stream_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "model_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "model_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "revision": { "type": "integer", "minimum": 0 },
+        "is_final": { "type": "boolean" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "tokens": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "confidence", "start_ms", "end_ms", "uncertain"],
+            "properties": {
+              "text": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "start_ms": { "type": "integer", "minimum": 0 },
+              "end_ms": { "type": "integer", "minimum": 0 },
+              "uncertain": { "type": "boolean" }
+            }
+          },
+          "maxItems": 256
+        },
+        "latency_ms": { "type": "number", "minimum": 0 }
+      }
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "type", "state", "message"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "type": { "const": "status" },
+        "state": { "enum": ["ready", "model_loading", "model_unavailable", "camera_unavailable", "degraded", "error"] },
+        "message": { "type": "string", "maxLength": 512 },
+        "model_id": { "type": ["string", "null"], "maxLength": 128 },
+        "model_version": { "type": ["string", "null"], "maxLength": 64 }
+      }
+    }
+  }
+}
