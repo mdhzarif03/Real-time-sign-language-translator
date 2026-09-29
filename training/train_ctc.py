@@ -71,20 +71,26 @@ def load_manifest(path: Path, language: str) -> tuple[list[dict], dict[str, set[
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     seen: set[str] = set()
     signer_splits: dict[str, set[str]] = {}
+    session_splits: dict[str, set[str]] = {}
     for row in rows:
         if row.get("split") not in {"train", "validation", "test"}:
             raise ValueError("each row needs train, validation or test split metadata")
         sample_id = row.get("sample_id")
         signer_id = row.get("signer_id")
-        if not sample_id or sample_id in seen or not signer_id:
-            raise ValueError("manifest sample IDs must be unique and signer IDs must be present")
+        session_id = row.get("session_id")
+        if not all(isinstance(value, str) and value.strip() for value in (sample_id, signer_id, session_id)) or sample_id in seen:
+            raise ValueError("manifest sample IDs must be unique and signer_id/session_id must be present")
         if row.get("language") != language:
             raise ValueError(f"{sample_id}: sample language must match the requested model language {language}")
         seen.add(sample_id)
         signer_splits.setdefault(signer_id, set()).add(row["split"])
+        session_splits.setdefault(session_id, set()).add(row["split"])
     leaked = [signer for signer, splits in signer_splits.items() if len(splits) > 1]
     if leaked:
         raise ValueError(f"signer leakage across splits: {', '.join(leaked[:10])}")
+    leaked_sessions = [session for session, splits in session_splits.items() if len(splits) > 1]
+    if leaked_sessions:
+        raise ValueError(f"recording session leakage across splits: {', '.join(leaked_sessions[:10])}")
     if not {"train", "validation", "test"}.issubset({row["split"] for row in rows}):
         raise ValueError("manifest must have samples in train, validation and test")
     return rows, signer_splits

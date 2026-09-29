@@ -20,7 +20,7 @@ Raw videos are not bundled. A corpus-specific adapter must provide trusted per-s
 First, write metadata JSONL rows like the following. `start_ms` and `end_ms` must be corpus annotations reviewed by a fluent sign-language annotator; do not synthesize them from sentence duration or model predictions:
 
 ```json
-{"sample_id":"clip-0001","signer_id":"signer-01","language":"en-US-ASL","video_path":"videos/clip-0001.mp4","segments":[{"gloss":"GO","start_ms":480,"end_ms":920},{"gloss":"SCHOOL","start_ms":1040,"end_ms":1710}]}
+{"sample_id":"clip-0001","signer_id":"signer-01","session_id":"recording-2025-01","language":"en-US-ASL","video_path":"videos/clip-0001.mp4","segments":[{"gloss":"GO","start_ms":480,"end_ms":920},{"gloss":"SCHOOL","start_ms":1040,"end_ms":1710}]}
 ```
 
 Assign signer splits before feature extraction, define a language-specific gloss vocabulary, then extract features:
@@ -35,7 +35,7 @@ The second command creates `manifest.features.jsonl` with `.npy` arrays and boun
 Each JSONL row in the training manifest contains:
 
 ```json
-{"sample_id":"s01-clip001","signer_id":"s01","sequence_id":"clip001","language":"en-US-ASL","feature_file":"features/s01-clip001.npy","gloss_ids":[4,17],"split":"train"}
+{"sample_id":"s01-clip001","signer_id":"s01","session_id":"recording-s01-01","sequence_id":"clip001","language":"en-US-ASL","feature_file":"features/s01-clip001.npy","gloss_ids":[4,17],"split":"train"}
 ```
 
 For model training, include a `boundary_file` path to an int64 NumPy array with one label per feature timestep: 0=outside a sign, 1=sign onset, 2=sign interior, 3=sign offset. Boundary labels must come from annotations or a documented alignment process, not frame heuristics. Vocabulary IDs are contiguous from 1; CTC blank is reserved at 0.
@@ -52,7 +52,7 @@ Create an initial deterministic signer split from a metadata JSONL file with:
 python training/split_by_signer.py data/raw/manifest.jsonl data/processed/manifest.split.jsonl --seed 2026
 ```
 
-The input must contain unique `sample_id` and `signer_id` fields and must not already contain `split` assignments. Review the emitted signer/sample counts and preserve the output manifest with the experiment.
+The input must contain unique `sample_id`, `signer_id`, and `session_id` fields and must not already contain `split` assignments. The splitter keeps both signers and recording sessions disjoint, including sessions containing more than one signer. Review the emitted signer/sample counts and preserve the output manifest with the experiment.
 
 ## Training requirements
 

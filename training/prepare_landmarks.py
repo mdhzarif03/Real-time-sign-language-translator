@@ -140,18 +140,33 @@ def prepare(rows: list[dict[str, Any]], dataset_root: Path, output_root: Path, m
         raise ValueError("vocabulary IDs must be contiguous from 1; CTC blank is reserved at 0")
     if sample_hz < 1 or sample_hz > 30:
         raise ValueError("sample_hz must be in [1, 30]")
+    signer_splits: dict[str, set[str]] = {}
+    session_splits: dict[str, set[str]] = {}
+    for row in rows:
+        signer_id, session_id, split = row.get("signer_id"), row.get("session_id"), row.get("split")
+        if not isinstance(signer_id, str) or not signer_id or not isinstance(session_id, str) or not session_id:
+            raise ValueError("every row must include non-empty signer_id and session_id")
+        if split not in {"train", "validation", "test"}:
+            raise ValueError("every row must have a train, validation or test split")
+        signer_splits.setdefault(signer_id, set()).add(split)
+        session_splits.setdefault(session_id, set()).add(split)
+    if any(len(splits) > 1 for splits in signer_splits.values()):
+        raise ValueError("signer leakage across preprocessing splits")
+    if any(len(splits) > 1 for splits in session_splits.values()):
+        raise ValueError("recording session leakage across preprocessing splits")
     seen: set[str] = set()
     output_rows: list[dict[str, Any]] = []
     (output_root / "features").mkdir(parents=True, exist_ok=True)
     for row in rows:
         sample_id = row.get("sample_id")
         signer_id = row.get("signer_id")
+        session_id = row.get("session_id")
         language = row.get("language")
         split = row.get("split")
         if not isinstance(sample_id, str) or not sample_id or sample_id in seen:
             raise ValueError("sample_id values must be unique non-empty strings")
-        if not isinstance(signer_id, str) or not signer_id or split not in {"train", "validation", "test"}:
-            raise ValueError(f"{sample_id}: signer_id and a signer-disjoint split are required")
+        if not isinstance(signer_id, str) or not signer_id or not isinstance(session_id, str) or not session_id or split not in {"train", "validation", "test"}:
+            raise ValueError(f"{sample_id}: signer_id, session_id and a signer/session-disjoint split are required")
         if not isinstance(language, str) or not language:
             raise ValueError(f"{sample_id}: an explicit sign-language identifier is required")
         seen.add(sample_id)
@@ -168,6 +183,7 @@ def prepare(rows: list[dict[str, Any]], dataset_root: Path, output_root: Path, m
         output_rows.append({
             "sample_id": sample_id,
             "signer_id": signer_id,
+            "session_id": session_id,
             "sequence_id": row.get("sequence_id", sample_id),
             "language": language,
             "feature_file": feature_path.relative_to(output_root).as_posix(),
