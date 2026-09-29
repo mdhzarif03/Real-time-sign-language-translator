@@ -69,7 +69,7 @@ Training lifecycle: ingest and validate metadata → signer split → preprocess
 
 ## Failure states
 
-Camera denial → explain browser permission/device selection. Missing or incompatible model → keep app usable and display recognition unavailable. TTS failure → retain text and expose retry. Slow service → drop stale work and expose degraded status. WebSocket disconnect → reconnect with bounded backoff without retaining camera frames. Each subsystem failure must not crash the rest of the interface.
+Camera denial → explain browser permission/device selection. Missing or incompatible model → keep app usable and display recognition unavailable. TTS failure → retain text and expose retry. Slow service → drop stale work and expose degraded status. WebSocket disconnect → reconnect with capped exponential backoff and a fresh stream ID without retaining camera frames; stopping capture cancels retries. Each subsystem failure must not crash the rest of the interface.
 
 ## Planned repository layout
 
@@ -98,7 +98,7 @@ Implemented foundations now include the React/Vite camera client and local landm
 4. **Recognition runtime:** a local PyTorch temporal checkpoint loader, language/feature compatibility checks, CTC gloss decoder, confidence/timing events, and raw-gloss UI are implemented. Sequence stability/calibration and model evaluation remain.
 5. **Language-specific model:** signer-split tooling and a training baseline exist. A legally usable, annotated dataset and trained checkpoint are still required; no inference quality is claimed.
 6. **Language/TTS:** bounded browser phrase speech and UI controls exist. The language-specific sentence realizer is intentionally absent until a real, evaluated sign-to-language resource is available; no gloss-to-sentence guesses are emitted.
-7. **Hardening:** loopback/origin checks, payload/rate limits, local-only video, and missing-model/camera/TTS handling are implemented. Accessibility review, device benchmarks, robust reconnects, corpus-backed model evaluation, and multi-device camera verification remain.
+7. **Hardening:** loopback/origin checks, payload/rate limits, local-only video, missing-model/camera/TTS handling, and bounded recognizer reconnects are implemented. Accessibility review, device benchmarks, corpus-backed model evaluation, and multi-device camera verification remain.
 
 ## Hardware assumptions and limits
 

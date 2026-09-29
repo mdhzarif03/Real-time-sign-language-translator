@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import type { LandmarkFrame, VisionWorkerMessage } from './vision.types';
 import { SpeechQueue, type SpeechState } from './tts/SpeechQueue';
+import { ReconnectPolicy } from './network/ReconnectPolicy';
 
 type CameraState = 'idle' | 'starting' | 'running' | 'paused' | 'error';
 
@@ -72,6 +73,10 @@ export default function App() {
   const workerRef = useRef<Worker | undefined>(undefined);
   const streamRef = useRef<MediaStream | undefined>(undefined);
   const socketRef = useRef<WebSocket | undefined>(undefined);
+  const reconnectTimerRef = useRef<number | undefined>(undefined);
+  const stableConnectionTimerRef = useRef<number | undefined>(undefined);
+  const reconnectPolicyRef = useRef(new ReconnectPolicy());
+  const recognizerGenerationRef = useRef(0);
   const streamIdRef = useRef('');
   const streamLanguageRef = useRef('en-US-ASL');
   const sequenceRef = useRef(0);
@@ -145,7 +150,13 @@ export default function App() {
   thresholdRef.current = threshold;
   speechSettingsRef.current = speechSettings();
 
-  const connectLocalRecognizer = useCallback((language: string) => {
+  const connectLocalRecognizer = useCallback((language: string, retry = false) => {
+    window.clearTimeout(reconnectTimerRef.current);
+    window.clearTimeout(stableConnectionTimerRef.current);
+    reconnectTimerRef.current = undefined;
+    stableConnectionTimerRef.current = undefined;
+    if (!retry) reconnectPolicyRef.current.reset();
+    const generation = ++recognizerGenerationRef.current;
     socketRef.current?.close(1000, 'Starting a fresh signer stream');
     streamIdRef.current = crypto.randomUUID(); sequenceRef.current = 0;
     streamLanguageRef.current = language;
@@ -153,6 +164,12 @@ export default function App() {
     const socket = new WebSocket(`ws://127.0.0.1:8000/api/v1/stream/${streamIdRef.current}`);
     socketRef.current = socket;
     setServiceStatus('Connecting to local recognizer…');
+    socket.onopen = () => {
+      if (recognizerGenerationRef.current !== generation) return;
+      stableConnectionTimerRef.current = window.setTimeout(() => {
+        if (recognizerGenerationRef.current === generation && socket.readyState === WebSocket.OPEN) reconnectPolicyRef.current.reset();
+      }, 10_000);
+    };
     socket.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data) as {
@@ -203,9 +220,23 @@ export default function App() {
         setServiceStatus('Local service returned an invalid status');
       }
     };
-    socket.onerror = () => setServiceStatus('Local recognizer unavailable; landmarks remain on this device');
+    socket.onerror = () => {
+      if (recognizerGenerationRef.current === generation && socketRef.current === socket) {
+        setServiceStatus('Local recognizer unavailable; retrying locally');
+      }
+    };
     socket.onclose = () => {
-      if (streamRef.current && socketRef.current === socket) setServiceStatus('Local recognizer disconnected; landmarks remain on this device');
+      if (!streamRef.current || socketRef.current !== socket || recognizerGenerationRef.current !== generation) return;
+      window.clearTimeout(stableConnectionTimerRef.current);
+      stableConnectionTimerRef.current = undefined;
+      const delay = reconnectPolicyRef.current.nextDelayMs();
+      setServiceStatus(`Local recognizer disconnected; retrying in ${Math.ceil(delay / 1000)}s`);
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = undefined;
+        if (streamRef.current && recognizerGenerationRef.current === generation && streamLanguageRef.current === language) {
+          connectLocalRecognizer(language, true);
+        }
+      }, delay);
     };
     return socket;
   }, []);
@@ -255,6 +286,12 @@ export default function App() {
 
   const stopCapture = useCallback((nextState: CameraState = 'idle') => {
     epochRef.current += 1;
+    recognizerGenerationRef.current += 1;
+    window.clearTimeout(reconnectTimerRef.current);
+    window.clearTimeout(stableConnectionTimerRef.current);
+    reconnectTimerRef.current = undefined;
+    stableConnectionTimerRef.current = undefined;
+    reconnectPolicyRef.current.reset();
     cancelAnimationFrame(loopRef.current);
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = undefined;
@@ -333,8 +370,12 @@ export default function App() {
 
   useEffect(() => () => {
     cancelAnimationFrame(loopRef.current);
+    recognizerGenerationRef.current += 1;
+    window.clearTimeout(reconnectTimerRef.current);
+    window.clearTimeout(stableConnectionTimerRef.current);
     streamRef.current?.getTracks().forEach((track) => track.stop());
     workerRef.current?.terminate();
+    socketRef.current?.close(1000, 'Application closed');
     window.speechSynthesis?.cancel();
   }, []);
 

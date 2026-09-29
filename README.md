@@ -5,6 +5,7 @@ Privacy-first foundation for continuous sign-language translation. The live came
 ## Current state
 
 - The web client captures camera video locally and runs MediaPipe Holistic Landmarker for face, pose, and both hands in a dedicated worker.
+- Local recognizer WebSocket failures retry with capped exponential backoff; reconnects receive a new stream ID, and stopping capture cancels pending retries.
 - Camera frames are not uploaded or recorded. Local vision task files are downloaded once into the frontend's public assets.
 - Translation and speech output are unavailable until a compatible temporal recognition model and language realization layer are supplied.
 - Architecture and stream contracts: [`docs/architecture.md`](docs/architecture.md), [`contracts/stream-event.schema.json`](contracts/stream-event.schema.json).
