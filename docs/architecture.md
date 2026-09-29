@@ -38,7 +38,7 @@ The WebSocket accepts only versioned JSON events validated against `contracts/st
 
 ### Temporal recognition design
 
-The main model is not a frame classifier. The current training baseline consumes a sliding timestamped sequence with left/right hand identity, per-landmark visibility, pose and face features. Hand and pose spatial graph encoders feed a temporal Transformer with CTC and boundary heads. It emits glosses, not natural-language translation. The client uses Holistic Landmarker tracking; robust temporal smoothing, boundary-aware duplicate suppression, and pose-hold behavior remain evaluation and decoder work. Decoder calibration and model behavior require signer-held-out evaluation.
+The main model is not a frame classifier. The current training baseline consumes a sliding timestamped sequence with left/right hand identity, per-landmark visibility, pose and face features. Hand and pose spatial graph encoders feed a temporal Transformer with CTC and separate sign/sentence boundary heads. Explicit sentence-end annotation is required; ordinary sign offsets cannot end a sentence. It emits glosses, not natural-language translation. The client uses Holistic Landmarker tracking; robust temporal smoothing, boundary-aware duplicate suppression, and pose-hold behavior remain evaluation and decoder work. Decoder calibration and model behavior require signer-held-out evaluation.
 
 The recognition adapter contract must support model ID/version, sign-language ID, health/loading state, partial and final hypotheses, uncertainty, and latency. Model absence or incompatible language must fail closed.
 

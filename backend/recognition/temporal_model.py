@@ -12,7 +12,7 @@ from backend.app.features import FEATURE_DIM
 @dataclass
 class TemporalOutput:
     sign_logits: Tensor  # [batch, time, blank + vocabulary]
-    boundary_logits: Tensor  # [batch, time, outside/start/inside/end]
+    boundary_logits: Tensor  # [batch, time, outside/start/inside/sign-end/sentence-end]
 
 
 class SinusoidalPositionEncoding(nn.Module):
@@ -64,7 +64,7 @@ class LandmarkGraphEncoder(nn.Module):
 
 
 class TemporalSignTransformer(nn.Module):
-    """Hand/body/face graph encoder with a temporal CTC gloss and boundary decoder."""
+    """Hand/body/face graph encoder with temporal CTC and sign/sentence boundaries."""
 
     def __init__(
         self,
@@ -111,7 +111,7 @@ class TemporalSignTransformer(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(block, num_layers=layers, norm=nn.LayerNorm(width), enable_nested_tensor=False)
         self.sign_head = nn.Linear(width, vocabulary_size + 1)  # CTC blank is index zero.
-        self.boundary_head = nn.Linear(width, 4)
+        self.boundary_head = nn.Linear(width, 5)
 
     def forward(self, features: Tensor, lengths: Tensor) -> TemporalOutput:
         if features.ndim != 3 or features.shape[-1] != self.feature_dim:
@@ -131,7 +131,7 @@ class TemporalSignTransformer(nn.Module):
 
 def build_model_from_config(config: dict, vocabulary_size: int) -> TemporalSignTransformer:
     """Construct only bounded, versioned model configurations from checkpoints."""
-    expected_architecture = "spatiotemporal-landmark-ctc-v2"
+    expected_architecture = "spatiotemporal-landmark-ctc-v3"
     if config.get("architecture") != expected_architecture or int(config.get("feature_dim", -1)) != 2212:
         raise ValueError("unsupported temporal model architecture or feature dimension")
     expected_vocabulary_size = int(config.get("vocabulary_size", -1))
@@ -168,7 +168,11 @@ def ctc_objective(
         raise ValueError("boundary_targets must have shape [batch,time]")
     log_probabilities = output.sign_logits.log_softmax(dim=-1).transpose(0, 1)
     ctc = nn.CTCLoss(blank=0, zero_infinity=True)(log_probabilities, targets, input_lengths, target_lengths)
+    flat_targets = boundary_targets.flatten()
+    valid_targets = flat_targets[flat_targets.ne(-100)]
+    counts = torch.bincount(valid_targets, minlength=output.boundary_logits.shape[-1]).to(dtype=output.boundary_logits.dtype)
+    class_weights = (counts.sum() / (len(counts) * counts.clamp_min(1))).clamp(max=10)
     boundary = nn.functional.cross_entropy(
-        output.boundary_logits.flatten(0, 1), boundary_targets.flatten(), ignore_index=-100
+        output.boundary_logits.flatten(0, 1), flat_targets, weight=class_weights, ignore_index=-100
     )
     return ctc + 0.15 * boundary

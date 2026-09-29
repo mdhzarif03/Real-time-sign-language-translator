@@ -16,7 +16,7 @@ if torch is not None:
 class TemporalModelTests(unittest.TestCase):
     def test_checkpoint_configuration_is_bounded_and_recreates_architecture(self) -> None:
         config = {
-            "architecture": "spatiotemporal-landmark-ctc-v2",
+            "architecture": "spatiotemporal-landmark-ctc-v3",
             "feature_dim": FEATURE_DIM,
             "vocabulary_size": 7,
             "width": 64,
@@ -49,7 +49,7 @@ class TemporalModelTests(unittest.TestCase):
         output = model(features, lengths)
 
         self.assertEqual(output.sign_logits.shape, (2, 8, 6))
-        self.assertEqual(output.boundary_logits.shape, (2, 8, 4))
+        self.assertEqual(output.boundary_logits.shape, (2, 8, 5))
         self.assertTrue(torch.isfinite(output.sign_logits).all())
         boundaries = torch.zeros(2, 8, dtype=torch.long)
         boundaries[1, 6:] = -100

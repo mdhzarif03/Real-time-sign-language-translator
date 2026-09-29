@@ -18,6 +18,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from backend.app.features import FEATURE_DIM
+from backend.recognition.compute import configure_torch_threads
 from backend.recognition.temporal_model import TemporalSignTransformer, ctc_objective
 
 
@@ -39,8 +40,10 @@ class SequenceDataset(Dataset):
             raise ValueError(f"{row['sample_id']}: expected non-empty [time,{FEATURE_DIM}] features")
         if gloss_ids.ndim != 1 or gloss_ids.size == 0:
             raise ValueError(f"{row['sample_id']}: gloss_ids must be a non-empty sequence")
-        if boundaries.shape != (features.shape[0],) or np.any((boundaries < 0) | (boundaries > 3)):
-            raise ValueError(f"{row['sample_id']}: boundary labels must be [time] integers in 0..3")
+        if boundaries.shape != (features.shape[0],) or np.any((boundaries < 0) | (boundaries > 4)):
+            raise ValueError(f"{row['sample_id']}: boundary labels must be [time] integers in 0..4")
+        if np.count_nonzero(boundaries == 4) != 1 or np.count_nonzero(boundaries == 1) == 0:
+            raise ValueError(f"{row['sample_id']}: each sentence needs sign onsets and exactly one sentence-end boundary")
         if np.any((gloss_ids < 1) | (gloss_ids >= self.vocabulary_size)):
             raise ValueError(f"{row['sample_id']}: gloss ID outside the language vocabulary")
         return torch.from_numpy(features), torch.from_numpy(gloss_ids), torch.from_numpy(boundaries)
@@ -145,6 +148,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.epochs < 1 or args.batch_size < 1:
         parser.error("epochs and batch size must be positive")
+    configure_torch_threads()
     random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
     rows, signer_splits = load_manifest(args.manifest, args.language)
     vocabulary = json.loads(args.vocabulary.read_text(encoding="utf-8"))
@@ -176,7 +180,7 @@ def main() -> None:
                 "model_config": {
                     "feature_dim": FEATURE_DIM,
                     "vocabulary_size": len(vocabulary),
-                    "architecture": "spatiotemporal-landmark-ctc-v2",
+                    "architecture": "spatiotemporal-landmark-ctc-v3",
                     "width": model.encoder.layers[0].self_attn.embed_dim,
                     "heads": model.encoder.layers[0].self_attn.num_heads,
                     "layers": len(model.encoder.layers),
@@ -184,7 +188,7 @@ def main() -> None:
                     "dropout": model.encoder.layers[0].dropout.p,
                 },
                 "sign_language": args.language,
-                "model_version": "signflow-spatiotemporal-ctc-v2",
+                "model_version": "signflow-spatiotemporal-ctc-v3",
                 "vocabulary": vocabulary,
                 "feature_layout": "hands-left-right-21x4_pose-33x4_face-478x4_v1",
                 "dataset_manifest": str(args.manifest),

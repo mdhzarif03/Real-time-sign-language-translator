@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -30,21 +31,41 @@ def _point(landmark: Any) -> dict[str, float]:
     }
 
 
-def _boundary_targets(timestamps: list[int], segments: list[dict[str, Any]], vocabulary: dict[str, int]) -> tuple[list[int], list[int]]:
+def _boundary_targets(
+    timestamps: list[int],
+    segments: list[dict[str, Any]],
+    vocabulary: dict[str, int],
+    sentence_end_ms: int | float,
+) -> tuple[list[int], list[int]]:
     if not timestamps:
         raise ValueError("video produced no frames at the selected sample rate")
+    if any(not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) for value in timestamps):
+        raise ValueError("sample timestamps must be finite numbers")
+    if any(right <= left for left, right in zip(timestamps, timestamps[1:])):
+        raise ValueError("sample timestamps must increase strictly")
     if not segments:
         raise ValueError("each continuous sample requires timestamped gloss segments")
+    if not isinstance(sentence_end_ms, (int, float)) or isinstance(sentence_end_ms, bool) or not math.isfinite(sentence_end_ms) or sentence_end_ms < 0:
+        raise ValueError("each sample requires an annotated sentence_end_ms")
     boundaries = [0] * len(timestamps)
     gloss_ids: list[int] = []
     previous_end = -1
-    for segment in segments:
+    for segment_index, segment in enumerate(segments):
         gloss = segment.get("gloss")
         start_ms = segment.get("start_ms")
         end_ms = segment.get("end_ms")
         if not isinstance(gloss, str) or gloss not in vocabulary:
             raise ValueError(f"gloss {gloss!r} is missing from the supplied language vocabulary")
-        if not isinstance(start_ms, (int, float)) or not isinstance(end_ms, (int, float)) or start_ms < 0 or end_ms <= start_ms:
+        if (
+            not isinstance(start_ms, (int, float))
+            or not isinstance(end_ms, (int, float))
+            or isinstance(start_ms, bool)
+            or isinstance(end_ms, bool)
+            or not math.isfinite(start_ms)
+            or not math.isfinite(end_ms)
+            or start_ms < 0
+            or end_ms <= start_ms
+        ):
             raise ValueError(f"{gloss}: segment times must satisfy 0 <= start_ms < end_ms")
         start_index = min(range(len(timestamps)), key=lambda index: abs(timestamps[index] - start_ms))
         end_index = min(range(len(timestamps)), key=lambda index: abs(timestamps[index] - end_ms))
@@ -55,9 +76,13 @@ def _boundary_targets(timestamps: list[int], segments: list[dict[str, Any]], voc
         boundaries[start_index] = 1
         for index in range(start_index + 1, end_index):
             boundaries[index] = 2
-        boundaries[end_index] = 3
+        boundaries[end_index] = 4 if segment_index == len(segments) - 1 else 3
         previous_end = end_index
         gloss_ids.append(int(vocabulary[gloss]))
+    sentence_end_index = min(range(len(timestamps)), key=lambda index: abs(timestamps[index] - sentence_end_ms))
+    last_sign_end = min(range(len(timestamps)), key=lambda index: abs(timestamps[index] - segments[-1]["end_ms"]))
+    if sentence_end_index != last_sign_end:
+        raise ValueError("sentence_end_ms must align with the final annotated gloss end")
     return gloss_ids, boundaries
 
 
@@ -171,7 +196,7 @@ def prepare(rows: list[dict[str, Any]], dataset_root: Path, output_root: Path, m
             raise ValueError(f"{sample_id}: an explicit sign-language identifier is required")
         seen.add(sample_id)
         features, timestamps = _features_from_video(_safe_video_path(dataset_root, row["video_path"]), model_path, sample_hz)
-        gloss_ids, boundaries = _boundary_targets(timestamps, row.get("segments", []), vocabulary)
+        gloss_ids, boundaries = _boundary_targets(timestamps, row.get("segments", []), vocabulary, row.get("sentence_end_ms"))
         minimum_ctc_frames = len(gloss_ids) + sum(left == right for left, right in zip(gloss_ids, gloss_ids[1:]))
         if minimum_ctc_frames > len(features):
             raise ValueError(f"{sample_id}: CTC needs at least {minimum_ctc_frames} frames for this gloss sequence")

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 from collections.abc import Sequence
@@ -12,16 +11,9 @@ import torch
 
 from backend.app.features import FEATURE_DIM
 from backend.app.schemas import Hypothesis, Status, TokenHypothesis
+from .compute import configure_torch_threads
+from .decoding import sentence_end_peak
 from .temporal_model import build_model_from_config
-
-
-def configure_cpu_threads() -> int:
-    """Avoid severe CPU oversubscription; operators may tune this for their host."""
-    requested = int(os.getenv("SIGNFLOW_TORCH_THREADS", "4"))
-    if not 1 <= requested <= 64:
-        raise ValueError("SIGNFLOW_TORCH_THREADS must be between 1 and 64")
-    torch.set_num_threads(requested)
-    return requested
 
 FEATURE_LAYOUT = "hands-left-right-21x4_pose-33x4_face-478x4_v1"
 
@@ -41,7 +33,7 @@ class TemporalRuntime:
     def load(cls, manifest_path: str | Path) -> tuple[TemporalRuntime | None, Status]:
         path = Path(manifest_path).expanduser().resolve()
         try:
-            configure_cpu_threads()
+            configure_torch_threads()
             manifest = json.loads(path.read_text(encoding="utf-8"))
             required = ("model_id", "model_version", "sign_language", "checkpoint", "feature_layout")
             if not isinstance(manifest, dict) or any(not isinstance(manifest.get(key), str) or not manifest[key] for key in required):
@@ -130,8 +122,9 @@ class TemporalRuntime:
                 active_scores = []
         flush()
 
-        boundary = output.boundary_logits[0, -min(4, len(selected)) :].softmax(dim=-1)
-        is_final = bool((boundary[:, 3].mean() >= 0.65).item())
+        boundary = output.boundary_logits[0, -min(4, len(selected)) :].softmax(dim=-1).tolist()
+        _, sentence_end_confidence = sentence_end_peak(boundary)
+        is_final = sentence_end_confidence >= 0.65
         confidence = sum(token.confidence for token in tokens) / max(1, len(tokens))
         return Hypothesis(
             stream_id=stream_id,

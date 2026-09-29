@@ -13,3 +13,13 @@ def ctc_greedy_decode(labels: Sequence[int]) -> list[int]:
             decoded.append(label)
         previous = label
     return decoded
+
+
+def sentence_end_peak(boundary_probabilities: Sequence[Sequence[float]]) -> tuple[int, float]:
+    """Find the strongest explicit sentence-end frame in a recent window."""
+    if not boundary_probabilities:
+        return -1, 0.0
+    if any(len(frame) != 5 for frame in boundary_probabilities):
+        raise ValueError("boundary probabilities must have five classes")
+    peaks = [(index, float(frame[4])) for index, frame in enumerate(boundary_probabilities)]
+    return max(peaks, key=lambda item: item[1])

@@ -24,7 +24,7 @@ class TemporalRuntimeTests(unittest.TestCase):
         config = {
             "feature_dim": FEATURE_DIM,
             "vocabulary_size": 2,
-            "architecture": "spatiotemporal-landmark-ctc-v2",
+            "architecture": "spatiotemporal-landmark-ctc-v3",
             "width": 64,
             "heads": 4,
             "layers": 1,

@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT))
 from backend.app.features import FEATURE_DIM
+from backend.recognition.compute import configure_torch_threads
 from backend.recognition.temporal_model import build_model_from_config
 from training.train_ctc import SequenceDataset, collate, decode, load_manifest
 
@@ -66,6 +67,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.batch_size < 1:
         parser.error("batch-size must be positive")
+    configure_torch_threads()
 
     rows, signer_splits = load_manifest(args.manifest, args.language)
     held_out = [row for row in rows if row["split"] == "test"]

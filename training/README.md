@@ -20,7 +20,7 @@ Raw videos are not bundled. A corpus-specific adapter must provide trusted per-s
 First, write metadata JSONL rows like the following. `start_ms` and `end_ms` must be corpus annotations reviewed by a fluent sign-language annotator; do not synthesize them from sentence duration or model predictions:
 
 ```json
-{"sample_id":"clip-0001","signer_id":"signer-01","session_id":"recording-2025-01","language":"en-US-ASL","video_path":"videos/clip-0001.mp4","segments":[{"gloss":"GO","start_ms":480,"end_ms":920},{"gloss":"SCHOOL","start_ms":1040,"end_ms":1710}]}
+{"sample_id":"clip-0001","signer_id":"signer-01","session_id":"recording-2025-01","language":"en-US-ASL","video_path":"videos/clip-0001.mp4","sentence_end_ms":1710,"segments":[{"gloss":"GO","start_ms":480,"end_ms":920},{"gloss":"SCHOOL","start_ms":1040,"end_ms":1710}]}
 ```
 
 Assign signer splits before feature extraction, define a language-specific gloss vocabulary, then extract features:
@@ -38,7 +38,7 @@ Each JSONL row in the training manifest contains:
 {"sample_id":"s01-clip001","signer_id":"s01","session_id":"recording-s01-01","sequence_id":"clip001","language":"en-US-ASL","feature_file":"features/s01-clip001.npy","gloss_ids":[4,17],"split":"train"}
 ```
 
-For model training, include a `boundary_file` path to an int64 NumPy array with one label per feature timestep: 0=outside a sign, 1=sign onset, 2=sign interior, 3=sign offset. Boundary labels must come from annotations or a documented alignment process, not frame heuristics. Vocabulary IDs are contiguous from 1; CTC blank is reserved at 0.
+For model training, include a `boundary_file` path to an int64 NumPy array with one label per feature timestep: 0=outside a sign, 1=sign onset, 2=sign interior, 3=non-final sign offset, 4=sentence end. The final gloss end must align with the manually annotated `sentence_end_ms`; the runtime commits a sentence only from class 4, not from every within-sentence sign boundary. Boundary labels must come from annotations or a documented alignment process, not frame heuristics. Vocabulary IDs are contiguous from 1; CTC blank is reserved at 0.
 
 Feature arrays are float32 `[time, 2212]`: left hand (21×4), right hand (21×4), upper pose (33×4), face (478×4). The four channels are x, y, z, visibility. This exact layout is also implemented by `backend/app/features.py`. The vocabulary reserves CTC blank at ID 0; gloss IDs start at 1. Record the dataset license, source, annotation policy, signer, recording session, and split manifest alongside the data.
 
