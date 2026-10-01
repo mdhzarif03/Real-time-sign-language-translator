@@ -1,6 +1,7 @@
+
 # Real-time sign language translator
 
-Privacy-first foundation for continuous sign-language translation. The live camera and local hand/pose/face landmark pipeline are implemented. No trained sign-language recognition checkpoint is included, so the app does not fabricate translations or claim accuracy.
+Privacy-first foundation for continuous sign-language translation. The live camera and local hand/pose/face landmark pipeline are implemented. No production sign-language checkpoint is included because the repository contains no licensed training corpus. The recognizer is now a low-latency v4 GRU/CTC architecture, but it must be trained and signer-independently evaluated on real sign-language data before it can claim translation accuracy.
 
 ## Current state
 
@@ -66,4 +67,4 @@ To run the PyTorch model and model-forward tests, create a dedicated Python 3.12
 
 ## Privacy and limitations
 
-Local processing is the default. No raw frames are persisted, logged, or sent to a server. The current version visualizes extracted landmarks only. It cannot yet interpret sign sequences or speak translations. Accuracy, latency, and generalization have not been benchmarked.
+Local processing is the default. No raw frames are persisted, logged, or sent to a server. The current source tree includes the v4 recognizer/training pipeline, but no trained language checkpoint. Accuracy and end-to-end generalization are not claimed until a licensed, signer-independent corpus is supplied and evaluated. Model-only CPU inference on the v4 architecture was benchmarked during engineering at roughly 23 ms mean for a 64-frame window with width 192 on this environment; that is not end-to-end camera latency.

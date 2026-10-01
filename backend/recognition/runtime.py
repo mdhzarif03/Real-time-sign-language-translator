@@ -15,7 +15,7 @@ from .compute import configure_torch_threads
 from .decoding import sentence_end_peak
 from .temporal_model import build_model_from_config
 
-FEATURE_LAYOUT = "hands-left-right-21x4_pose-33x4_face-478x4_v1"
+FEATURE_LAYOUT = "hands-left-right-21x4_pose-33x4_face-478x4_v2-normalized"
 
 
 class TemporalRuntime:
@@ -61,7 +61,7 @@ class TemporalRuntime:
             model.load_state_dict(checkpoint["model_state"], strict=True)
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             model.to(device)
-            window_size = int(manifest.get("window_size", 96))
+            window_size = int(manifest.get("window_size", 64))
             if not 8 <= window_size <= 512:
                 raise ValueError("window_size must be between 8 and 512 observations")
             runtime = cls(model, vocabulary, manifest["sign_language"], manifest["model_id"], manifest["model_version"], device, window_size)

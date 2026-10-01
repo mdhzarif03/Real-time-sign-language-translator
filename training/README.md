@@ -84,8 +84,8 @@ To opt a trained checkpoint into local gloss inference, save a manifest beside t
   "model_version": "1",
   "sign_language": "en-US-ASL",
   "checkpoint": "asl-temporal.pt",
-  "feature_layout": "hands-left-right-21x4_pose-33x4_face-478x4_v1",
-  "window_size": 96
+  "feature_layout": "hands-left-right-21x4_pose-33x4_face-478x4_v2-normalized",
+  "window_size": 64
 }
 ```
 
@@ -97,3 +97,12 @@ python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
 The service verifies the language, checkpoint metadata, vocabulary, and feature layout before loading. It then emits temporal gloss hypotheses only. Natural-language sentence generation and speech remain unavailable until a separately evaluated language realization layer is configured. The model's softmax confidence is an uncalibrated score; calibrate it on held-out signers before using it as a probability.
+
+
+## Why the v4 runtime is faster
+
+The original baseline used a Transformer over the full landmark sequence and a graph pass over all 478 face landmarks. The v4 model keeps the same 2,212-value wire layout but normalizes each anatomical group for translation/scale robustness, uses lightweight graph encoders for hands/pose, attention pooling for the face, and a compact GRU with explicit frame differences for temporal motion. This avoids quadratic temporal attention and quadratic face message passing during every sliding-window inference. The browser still extracts landmarks locally, and the API runs the trained recognizer locally.
+
+Training now applies small landmark jitter, occasional anatomical-stream dropout, temporal frame dropout, mixed precision on CUDA, ReduceLROnPlateau, gradient clipping, and early stopping. Validation/test data receive no augmentation.
+
+Do not claim the model is accurate until a real signer-independent dataset has been processed and the held-out test report is available. The repository contains no sign-language training videos, so no production checkpoint is bundled.

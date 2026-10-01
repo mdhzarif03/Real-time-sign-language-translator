@@ -7,10 +7,10 @@ privacy:
 
 recognition:
   sign_language: null # Must be explicitly selected; e.g. en-US-ASL or bn-BD-BdSL after validation.
-  model_id: null
-  model_version: null
+  model_id: null # set by the language-specific trained checkpoint manifest
+  model_version: null # set by the language-specific trained checkpoint manifest
   confidence_threshold: 0.70
-  partial_window_ms: 2400
+  partial_window_ms: 3200
   max_stream_rate_hz: 20
 
 language:

@@ -74,7 +74,7 @@ def main() -> None:
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
     vocabulary_by_word = checkpoint.get("vocabulary")
     config = checkpoint.get("model_config", {})
-    if checkpoint.get("sign_language") != args.language or checkpoint.get("feature_layout") != "hands-left-right-21x4_pose-33x4_face-478x4_v1":
+    if checkpoint.get("sign_language") != args.language or checkpoint.get("feature_layout") != "hands-left-right-21x4_pose-33x4_face-478x4_v2-normalized":
         raise ValueError("checkpoint language or feature layout does not match the requested evaluation")
     if not isinstance(vocabulary_by_word, dict) or int(config.get("feature_dim", -1)) != FEATURE_DIM:
         raise ValueError("checkpoint is missing a compatible vocabulary/model configuration")

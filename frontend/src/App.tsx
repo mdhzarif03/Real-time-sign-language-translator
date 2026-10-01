@@ -345,7 +345,7 @@ export default function App() {
     const tick = async (now: number) => {
       const video = videoRef.current;
       const worker = workerRef.current;
-      if (video && worker && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && !busyRef.current && now - (frame?.timestampMs ?? 0) > 80) {
+      if (video && worker && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && !busyRef.current && now - (frame?.timestampMs ?? 0) > 55) {
         busyRef.current = true;
         try {
           const scale = Math.min(1, 640 / video.videoWidth);

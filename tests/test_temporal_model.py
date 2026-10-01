@@ -16,7 +16,7 @@ if torch is not None:
 class TemporalModelTests(unittest.TestCase):
     def test_checkpoint_configuration_is_bounded_and_recreates_architecture(self) -> None:
         config = {
-            "architecture": "spatiotemporal-landmark-ctc-v3",
+            "architecture": "spatiotemporal-landmark-ctc-v4-gru",
             "feature_dim": FEATURE_DIM,
             "vocabulary_size": 7,
             "width": 64,
@@ -26,8 +26,8 @@ class TemporalModelTests(unittest.TestCase):
             "dropout": 0.1,
         }
         model = build_model_from_config(config, vocabulary_size=7)
-        self.assertEqual(model.encoder.layers[0].self_attn.embed_dim, 64)
-        self.assertEqual(len(model.encoder.layers), 2)
+        self.assertEqual(model.temporal.hidden_size, 64)
+        self.assertEqual(model.temporal.num_layers, 2)
         with self.assertRaises(ValueError):
             build_model_from_config({**config, "width": 16_384}, vocabulary_size=7)
 

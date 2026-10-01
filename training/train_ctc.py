@@ -1,4 +1,4 @@
-"""Train the landmark temporal CTC baseline on a signer-split JSONL manifest."""
+"""Train the low-latency landmark CTC recognizer on signer-disjoint data."""
 
 from __future__ import annotations
 
@@ -17,16 +17,18 @@ from torch.utils.data import DataLoader, Dataset
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY_ROOT))
 
-from backend.app.features import FEATURE_DIM
+from backend.app.features import FEATURE_DIM, normalize_features
 from backend.recognition.compute import configure_torch_threads
 from backend.recognition.temporal_model import TemporalSignTransformer, ctc_objective
 
 
 class SequenceDataset(Dataset):
-    def __init__(self, rows: list[dict], root: Path, vocabulary_size: int) -> None:
+    def __init__(self, rows: list[dict], root: Path, vocabulary_size: int, augment: bool = False, seed: int = 2026) -> None:
         self.rows = rows
         self.root = root
         self.vocabulary_size = vocabulary_size
+        self.augment = augment
+        self.seed = seed
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -46,7 +48,32 @@ class SequenceDataset(Dataset):
             raise ValueError(f"{row['sample_id']}: each sentence needs sign onsets and exactly one sentence-end boundary")
         if np.any((gloss_ids < 1) | (gloss_ids >= self.vocabulary_size)):
             raise ValueError(f"{row['sample_id']}: gloss ID outside the language vocabulary")
+        features = normalize_features(features)
+        if self.augment:
+            features = self._augment(features, index)
         return torch.from_numpy(features), torch.from_numpy(gloss_ids), torch.from_numpy(boundaries)
+
+    def _augment(self, features: np.ndarray, index: int) -> np.ndarray:
+        rng = np.random.default_rng(self.seed + index * 1_000_003)
+        output = features.copy()
+        # Landmark jitter is intentionally small because the inputs are already normalized.
+        output[:, :,] += rng.normal(0.0, 0.008, output.shape).astype(np.float32)
+        output[..., 3] = np.clip(output[..., 3], 0.0, 1.0)
+        # Randomly hide an entire anatomical stream occasionally to improve robustness to detector misses.
+        if rng.random() < 0.18:
+            group = int(rng.integers(0, 4))
+            starts = (0, 21 * 4, 42 * 4, 75 * 4)
+            counts = (21 * 4, 21 * 4, 33 * 4, 478 * 4)
+            output[:, starts[group] : starts[group] + counts[group]] = 0
+        # Mild temporal jitter by dropping/repeating a few internal frames.
+        if len(output) >= 20 and rng.random() < 0.20:
+            keep = np.arange(len(output))
+            if len(keep) > 24:
+                drop_count = max(1, len(keep) // 20)
+                drop = rng.choice(np.arange(2, len(keep) - 2), size=drop_count, replace=False)
+                keep = np.delete(keep, np.sort(drop))
+                output = output[keep]
+        return output.astype(np.float32, copy=False)
 
     def _safe_path(self, relative_path: str) -> Path:
         if not isinstance(relative_path, str) or not relative_path:
@@ -112,7 +139,7 @@ def edit_distance(reference: list[int], hypothesis: list[int]) -> int:
 def decode(logits: torch.Tensor, length: int) -> list[int]:
     labels = logits[:length].argmax(dim=-1).tolist()
     result: list[int] = []
-    previous = None
+    previous = 0
     for label in labels:
         if label != 0 and label != previous:
             result.append(label)
@@ -139,58 +166,78 @@ def validation_wer(model, loader, device) -> float:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=Path)
-    parser.add_argument("vocabulary", type=Path, help="JSON object mapping gloss strings to IDs starting at 1")
+    parser.add_argument("vocabulary", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--language", required=True, help="explicit sign-language identifier")
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--language", required=True)
+    parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--seed", type=int, default=2026)
     args = parser.parse_args()
-    if args.epochs < 1 or args.batch_size < 1:
-        parser.error("epochs and batch size must be positive")
+    if args.epochs < 1 or args.batch_size < 1 or args.lr <= 0 or args.patience < 1:
+        parser.error("epochs, batch-size, patience and lr must be positive")
     configure_torch_threads()
     random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
     rows, signer_splits = load_manifest(args.manifest, args.language)
     vocabulary = json.loads(args.vocabulary.read_text(encoding="utf-8"))
     if not isinstance(vocabulary, dict) or not vocabulary or sorted(vocabulary.values()) != list(range(1, len(vocabulary) + 1)):
         raise ValueError("vocabulary IDs must be a contiguous integer range beginning at 1; CTC blank is reserved at 0")
     root = args.manifest.parent
-    datasets = {name: SequenceDataset([row for row in rows if row["split"] == name], root, len(vocabulary) + 1) for name in ("train", "validation", "test")}
-    loaders = {name: DataLoader(data, batch_size=args.batch_size, shuffle=name == "train", collate_fn=collate, num_workers=0) for name, data in datasets.items()}
+    datasets = {
+        "train": SequenceDataset([r for r in rows if r["split"] == "train"], root, len(vocabulary) + 1, augment=True, seed=args.seed),
+        "validation": SequenceDataset([r for r in rows if r["split"] == "validation"], root, len(vocabulary) + 1),
+        "test": SequenceDataset([r for r in rows if r["split"] == "test"], root, len(vocabulary) + 1),
+    }
+    loaders = {
+        name: DataLoader(data, batch_size=args.batch_size, shuffle=name == "train", collate_fn=collate, num_workers=0, pin_memory=torch.cuda.is_available())
+        for name, data in datasets.items()
+    }
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = TemporalSignTransformer(FEATURE_DIM, len(vocabulary)).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=1e-3)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-3)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=3, min_lr=2e-6)
+    scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
     best_wer = float("inf")
+    stale = 0
     args.output.parent.mkdir(parents=True, exist_ok=True)
     for epoch in range(1, args.epochs + 1):
         model.train(); total_loss = 0.0
         for features, targets, lengths, target_lengths, boundary_targets in loaders["train"]:
-            features = features.to(device); targets = targets.to(device); lengths = lengths.to(device)
-            output = model(features, lengths)
-            loss = ctc_objective(output, targets, target_lengths.to(device), lengths, boundary_targets.to(device))
-            optimizer.zero_grad(set_to_none=True); loss.backward()
+            features = features.to(device, non_blocking=True); targets = targets.to(device, non_blocking=True); lengths = lengths.to(device, non_blocking=True)
+            optimizer.zero_grad(set_to_none=True)
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=device.type == "cuda"):
+                output = model(features, lengths)
+                loss = ctc_objective(output, targets, target_lengths.to(device), lengths, boundary_targets.to(device))
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step(); total_loss += float(loss.detach())
+            scaler.step(optimizer); scaler.update()
+            total_loss += float(loss.detach())
         val_wer = validation_wer(model, loaders["validation"], device)
-        print(f"epoch={epoch} train_loss={total_loss / max(len(loaders['train']), 1):.4f} validation_gloss_wer={val_wer:.4f}")
-        if val_wer < best_wer:
-            best_wer = val_wer
+        scheduler.step(val_wer)
+        lr = optimizer.param_groups[0]["lr"]
+        print(f"epoch={epoch} train_loss={total_loss / max(len(loaders['train']), 1):.4f} validation_gloss_wer={val_wer:.4f} lr={lr:.2e}")
+        if val_wer < best_wer - 1e-4:
+            best_wer = val_wer; stale = 0
             torch.save({
                 "model_state": model.state_dict(),
                 "model_config": {
                     "feature_dim": FEATURE_DIM,
                     "vocabulary_size": len(vocabulary),
-                    "architecture": "spatiotemporal-landmark-ctc-v3",
-                    "width": model.encoder.layers[0].self_attn.embed_dim,
-                    "heads": model.encoder.layers[0].self_attn.num_heads,
-                    "layers": len(model.encoder.layers),
-                    "feedforward_dim": model.encoder.layers[0].linear1.out_features,
-                    "dropout": model.encoder.layers[0].dropout.p,
+                    "architecture": "spatiotemporal-landmark-ctc-v4-gru",
+                    "width": model.temporal.hidden_size,
+                    "heads": 4,
+                    "layers": model.temporal.num_layers,
+                    "feedforward_dim": model.temporal.hidden_size * 2,
+                    "dropout": model.temporal.dropout,
                 },
                 "sign_language": args.language,
-                "model_version": "signflow-spatiotemporal-ctc-v3",
+                "model_version": "signflow-spatiotemporal-ctc-v4-gru",
                 "vocabulary": vocabulary,
-                "feature_layout": "hands-left-right-21x4_pose-33x4_face-478x4_v1",
+                "feature_layout": "hands-left-right-21x4_pose-33x4_face-478x4_v2-normalized",
                 "dataset_manifest": str(args.manifest),
                 "dataset_manifest_sha256": hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
                 "vocabulary_sha256": hashlib.sha256(args.vocabulary.read_bytes()).hexdigest(),
@@ -200,6 +247,11 @@ def main() -> None:
                 "training_device": str(device),
                 "torch_version": str(torch.__version__),
             }, args.output)
+        else:
+            stale += 1
+            if stale >= args.patience:
+                print(f"early_stop epoch={epoch} best_validation_gloss_wer={best_wer:.4f}")
+                break
     print(f"best_validation_gloss_wer={best_wer:.4f}; checkpoint={args.output}")
     best = torch.load(args.output, map_location=device, weights_only=True)
     model.load_state_dict(best["model_state"])

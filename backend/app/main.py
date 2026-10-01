@@ -18,6 +18,7 @@ from .schemas import Hypothesis, Observation, Status
 APP_VERSION = "0.1.0"
 MAX_MESSAGE_BYTES = 262_144
 MAX_STREAM_HZ = 20
+INFERENCE_EVERY_OBSERVATIONS = 2
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -121,7 +122,7 @@ async def stream(websocket: WebSocket, stream_id: str) -> None:
         if runtime is None or model_status(app, language).state != "ready":
             continue
         history.append((observation_to_features(observation), observation.timestamp_ms))
-        if len(history) >= 8 and observation.sequence % 4 == 3:
+        if len(history) >= 12 and observation.sequence % INFERENCE_EVERY_OBSERVATIONS == 0:
             hypothesis: Hypothesis | None = await run_in_threadpool(runtime.predict, tuple(history), stream_id, revision)
             if hypothesis is not None:
                 revision += 1
